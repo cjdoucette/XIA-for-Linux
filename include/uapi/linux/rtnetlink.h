@@ -312,6 +312,7 @@ enum rtattr_type_t {
 	RTA_ENCAP_TYPE,
 	RTA_ENCAP,
 	RTA_EXPIRES,
+	RTA_LLADDR, /* Only used by XIA */
 	__RTA_MAX
 };
 
