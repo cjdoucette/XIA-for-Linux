@@ -1687,6 +1687,8 @@ struct net_device {
 	struct wpan_dev		*ieee802154_ptr;
 #if IS_ENABLED(CONFIG_MPLS_ROUTING)
 	struct mpls_dev __rcu	*mpls_ptr;
+#if defined(CONFIG_XIA) || defined(CONFIG_XIA_MODULE)
+	struct xip_dev __rcu	*xip_ptr;
 #endif
 
 /*
