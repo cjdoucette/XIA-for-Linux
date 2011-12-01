@@ -1688,6 +1688,9 @@ struct net_device {
 #if IS_ENABLED(CONFIG_MPLS_ROUTING)
 	struct mpls_dev __rcu	*mpls_ptr;
 #endif
+#if defined(CONFIG_XIA) || defined(CONFIG_XIA_MODULE)
+	struct xip_dev __rcu	*xip_ptr;
+#endif
 
 /*
  * Cache lines mostly used on receive path (including eth_type_trans())
