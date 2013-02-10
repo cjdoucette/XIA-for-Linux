@@ -8,12 +8,50 @@
 #include <net/xia_hid.h>
 
 /*
+ *	Neighbor Status
+ */
+
+#define NWP_ACTIVE		0x80000000
+#define NWP_FAILED		0x00000000
+
+#define NWP_STATUS_MASK		0x80000000
+#define NWP_CLOCK_MASK		0x7FFFFFFF
+
+#define NWP_RC_MAX		0x7FFFFFFF
+
+#define NWP_STATUS_LEN		(sizeof(((struct hrdw_addr *)0)->remote_sc))
+
+/* Returns:
+ * -1 if @c1 < @c2
+ *  0 if @c1 = @c2
+ *  1 if @c1 > @c2
+ */
+static int clockcmp32(u32 c1, u32 c2)
+{
+	if (c1 == c2)
+		return 0;
+
+	/* Check for clock overflow. */
+	return ((s32)(c2) - (s32)(c1) > 0) ? -1 : 1;
+}
+
+static inline int clockcmp31(u32 c1, u32 c2)
+{
+	/* The overflow check at the bottom of @clockcmp32 depends on the most
+	 * significant (31st) bit representing signedness. Since NWP remote
+	 * clocks only use bits 0-30, all bits should be shifted to the left.
+	 */
+	return clockcmp32(c1 << 1, c2 << 1);
+}
+
+/*
  *	Neighbor Table
  */
 
 static struct hrdw_addr *new_ha(struct net_device *dev, const u8 *lladdr,
-	gfp_t flags)
+	u32 status_clock, gfp_t flags)
 {
+	struct timeval t;
 	struct hrdw_addr *ha = kzalloc(sizeof(*ha), flags);
 	if (!ha)
 		return NULL;
@@ -23,6 +61,14 @@ static struct hrdw_addr *new_ha(struct net_device *dev, const u8 *lladdr,
 	dev_hold(dev);
 	xdst_init_anchor(&ha->anchor);
 	memmove(ha->ha, lladdr, dev->addr_len);
+	spin_lock_init(&ha->status_lock);
+
+	/* @ha is not accessible to any other threads at this point, so a
+	 * lock is not necessary.
+	 */
+	do_gettimeofday(&t);
+	ha->local_c = (u32)t.tv_sec;
+	ha->remote_sc = status_clock;
 	return ha;
 }
 
@@ -56,14 +102,89 @@ static inline void free_ha(struct hrdw_addr *ha)
 	call_rcu(&ha->rcu_head, __free_ha);
 }
 
-static int ha_exists(struct fib_xid_hid_main *mhid, struct net_device *dev,
-	const u8 *lladdr)
+/* @new is a duplicate neighbor; @old is already in the neighbor list. */
+static void update_ha_sc(struct fib_xid_hid_main *mhid,
+	struct hrdw_addr *new, struct hrdw_addr *old)
+{
+	struct hid_dev *hdev;
+	struct hrdw_addr *updated_ha;
+	u32 new_rsc, old_rsc, new_rc, old_rc, updated_rsc, updated_lc;
+
+	/* Since @new is only used in this
+	 * function, a lock is not necessary.
+	 */
+	new_rsc = new->remote_sc;
+	new_rc = NWP_CLOCK_MASK & new_rsc;
+
+	spin_lock(&old->status_lock);
+	old_rsc = old->remote_sc;
+	spin_unlock(&old->status_lock);
+	old_rc = NWP_CLOCK_MASK & old_rsc;
+
+	switch (clockcmp31(old_rsc, new_rsc)) {
+	case (1):
+		/* @old is more recent and already in the neighbor list. */
+		return;
+	case (0):
+		/* If clocks are the same but statuses are different, assume
+		 * status that has the neighbor as active is correct. If the
+		 * statuses are the same, no change is necessary.
+		 */
+		if ((NWP_STATUS_MASK & new_rsc) == (NWP_STATUS_MASK & old_rsc))
+			return;
+
+		updated_rsc = NWP_ACTIVE | new_rc;
+		updated_lc = new->local_c;
+		break;
+	case (-1):
+		/* If @new is more recent, the neighbor list needs to be
+		 * updated. The relative time difference between the local and
+		 * and remote clocks should remain the same, so it is necessary
+		 * to estimate the local time at which this change took place.
+		 *
+		 * @new_rc is logically greater than @old_rc, but it will not
+		 * be numerically greater if overflow occurred. Therefore, the
+		 * else case handles overflow of @new_rc. 1 is added to account
+		 * for overflow; to see why, consider the case where @old_rc =
+		 * NWP_RC_MAX and @new_rc = 0. There is still a step between
+		 * NWP_RC_MAX and 0, so 1 must be added for that step.
+		 */
+		updated_rsc = new->remote_sc;
+		updated_lc = (new_rc > old_rc)
+			? old->local_c + new_rc - old_rc
+			: old->local_c + new_rc + (NWP_RC_MAX - old_rc) + 1;
+		break;
+	default:
+		BUG();
+	}
+
+	/* XXX Is it okay that a new anchor is assigned for this HA? */
+	updated_ha = new_ha(old->dev, old->ha, updated_rsc, GFP_ATOMIC);
+	updated_ha->local_c = updated_lc;
+	mhid_hold(mhid);
+	updated_ha->mhid = mhid;
+
+	list_replace_rcu(&old->ha_list, &updated_ha->ha_list);
+
+	hdev = hid_dev_get(old->dev);
+	spin_lock(&hdev->neigh_lock);
+	list_replace_rcu(&old->hdev_list, &updated_ha->hdev_list);
+	spin_unlock(&hdev->neigh_lock);
+	hid_dev_put(hdev);
+
+	free_ha(old);
+}
+
+static int update_if_ha_exists(struct fib_xid_hid_main *mhid,
+	struct net_device *dev, struct hrdw_addr *ha, u32 status_clock)
 {
 	struct hrdw_addr *pos_ha;
 	list_for_each_entry(pos_ha, &mhid->xhm_haddrs, ha_list) {
 		if (unlikely(pos_ha->dev == dev &&
-			!memcmp(pos_ha->ha, lladdr, dev->addr_len)))
+			!memcmp(pos_ha->ha, ha->ha, dev->addr_len))) {
+			update_ha_sc(mhid, ha, pos_ha);
 			return 1;	/* Yes! */
+		}
 	}
 	return 0;
 }
@@ -79,8 +200,10 @@ static int add_ha(struct fib_xid_hid_main *mhid, struct hrdw_addr *ha)
 	list_for_each_entry(pos_ha, &mhid->xhm_haddrs, ha_list) {
 		int c1 = memcmp(pos_ha->ha, ha->ha, ha->dev->addr_len);
 		int c2 = pos_ha->dev == ha->dev;
-		if (unlikely(!c1 && c2))
+		if (!c1 && c2) {
+			update_ha_sc(mhid, ha, pos_ha);
 			return -EEXIST;	/* It's a duplicate. */
+		}
 
 		/* Keep listed sorted, but look at all ha's that have
 		 * the same ha->ha.
@@ -234,8 +357,9 @@ static void free_neighs_by_dev(struct hid_dev *hdev)
 	}
 }
 
-int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
-	struct net_device *dev, const u8 *lladdr, u32 nl_flags)
+static int insert_neigh_status(struct xip_hid_ctx *hid_ctx, const char *id,
+	struct net_device *dev, const u8 *lladdr, u32 status_clock,
+	u32 nl_flags)
 {
 	struct hrdw_addr *ha;
 	struct fib_xid_table *xtbl;
@@ -251,7 +375,7 @@ int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
 	/* GFP_ATOMIC is important because this function may be called from
 	 * an atomic context.
 	 */
-	ha = new_ha(dev, lladdr, GFP_ATOMIC);
+	ha = new_ha(dev, lladdr, status_clock, GFP_ATOMIC);
 	if (!ha)
 		return -ENOMEM;
 
@@ -271,7 +395,7 @@ int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
 		}
 		new_mhid = fxid_mhid(cur_fxid);
 
-		if (ha_exists(new_mhid, dev, lladdr)) {
+		if (update_if_ha_exists(new_mhid, dev, ha, status_clock)) {
 			if ((nl_flags & NLM_F_EXCL) ||
 				!(nl_flags & NLM_F_REPLACE)) {
 				rc = -EEXIST;
@@ -341,6 +465,16 @@ unlock_bucket:
 ha:
 	free_ha_norcu(ha);
 	return rc;
+}
+
+int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
+	struct net_device *dev, const u8 *lladdr, u32 nl_flags)
+{
+	/* If this function has been called, the neighbor to insert should
+	 * not be monitored by NWP and can be labeled failed.
+	 */
+	return insert_neigh_status(hid_ctx, id, dev, lladdr, NWP_FAILED,
+		nl_flags);
 }
 
 int remove_neigh(struct fib_xid_table *xtbl, const char *id,
@@ -415,6 +549,12 @@ struct announcement_state {
 #define NWP_TYPE_NEIGH_LIST	0x02
 #define NWP_TYPE_MAX		0x03
 
+/* If a failed node has been failed for more than NWP_LIST_TIME_MAX, it
+ * should not be put in the neighbor list to prevent neighboring nodes
+ * from cyclically adding, monitoring and deleting failed nodes.
+ */
+#define NWP_LIST_TIME_MAX	(10*HZ)
+
 struct general_hdr {
 	u8	version;
 	u8	type;
@@ -428,6 +568,8 @@ struct announcement_hdr {
 	u8	hid_count;
 	u8	haddr_len;
 
+	__be32	clock; /* Lower 32 bits of announcer's wall time (seconds). */
+
 	u8	haddr_begin[0];
 	u8	haddr[MAX_ADDR_LEN];
 } __packed;
@@ -439,12 +581,16 @@ struct neighs_hdr {
 	u8	haddr_len;
 
 	u8	neighs_begin[0];
-/*	XID_1 NUM_1 HA_11 HA_12 ... HA_1NUM_1
- *	XID_2 NUM_2 HA_21 HA_22 ... HA_2NUM_2
+/*	HID_1 NUM_1 (HA_11 S_11) (HA_12 S_12) ... (HA_1NUM_1 S_1NUM_1)
+ *	HID_2 NUM_2 (HA_21 S_21) (HA_22 S_22) ... (HA_2NUM_2 S_2NUM_2)
  *	...
- *	XID_count NUM_count HA_count1 HA_count2 ... HA_countNUM_count
+ *	HID_C NUM_C (HA_C1 S_C1) (HA_C2 S_C2) ... (HA_CNUM_C S_CNUM_C)
  *
- *	count == hid_count.
+ *	Key:
+ *	C:     hid_count
+ *	NUM_X: number of hardware address/status pairs for HID_X.
+ *	HA_XY: hardware address Y for HID_X.
+ *	S_XY:  remote status Y for HID_X.
  */
 } __packed;
 
@@ -515,6 +661,7 @@ static void announce_on_dev(struct fib_xid_table *xtbl, struct hid_dev *hdev)
 	struct sk_buff *skb;
 	struct announcement_hdr *nwp;
 	struct announcement_state state;
+	struct timeval t;
 
 	if (mtu < min_annoucement) {
 		pr_err("XIA HID NWP: Can't send an announcement because dev %s has MTU (%u) smaller than the smallest annoucement frame (%i)\n",
@@ -537,6 +684,8 @@ static void announce_on_dev(struct fib_xid_table *xtbl, struct hid_dev *hdev)
 	nwp->type	= NWP_TYPE_ANNOUCEMENT;
 	nwp->hid_count	= 0;
 	nwp->haddr_len	= dev->addr_len;
+	do_gettimeofday(&t);
+	nwp->clock	= __cpu_to_be32((u32)t.tv_sec);
 	memcpy(nwp->haddr, dev->dev_addr, dev->addr_len);
 
 	/* Fill out the body. */
@@ -636,7 +785,8 @@ static struct sk_buff *alloc_neigh_list_skb(struct net_device *dev,
 	int ll_tlen = dev->needed_tailroom;
 	int ll_space = ll_hlen + ll_tlen;
 	int hdr_len = offsetof(struct neighs_hdr, neighs_begin);
-	int min_list = ll_space + hdr_len + XIA_XID_MAX + 1 + dev->addr_len;
+	int entry_len = XIA_XID_MAX + 1 + dev->addr_len + NWP_STATUS_LEN;
+	int min_list = ll_space + hdr_len + entry_len;
 	struct sk_buff *skb;
 	struct neighs_hdr *nwp;
 
@@ -685,6 +835,7 @@ static void list_neighs_to(struct hid_dev *hdev, u8 *dest_haddr)
 	int min_entry, data_len;
 	struct hrdw_addr *ha;
 	int addr_len = dev->addr_len;
+	struct timeval t;
 
 	skb = alloc_neigh_list_skb(dev, mtu, &phid_counter);
 	if (!skb)
@@ -698,13 +849,28 @@ static void list_neighs_to(struct hid_dev *hdev, u8 *dest_haddr)
 	prv_mhid = NULL;
 	dummy = 0;
 	pcounter = &dummy;
-	min_entry = XIA_XID_MAX + 1 + addr_len;
+	min_entry = XIA_XID_MAX + 1 + addr_len + NWP_STATUS_LEN;
 	data_len = mtu - LL_RESERVED_SPACE(dev) - dev->needed_tailroom;
 	rcu_read_lock();
 	list_for_each_entry_rcu(ha, &hdev->neighs, hdev_list) {
 		int is_new_hid, need_new_skb;
 		struct fib_xid_hid_main *mhid = ha->mhid;
+		__be32 be_status_clock;
 		BUG_ON(ha->dev != dev);
+
+		do_gettimeofday(&t);
+		spin_lock(&ha->status_lock);
+		/* If a failed neighbor has expired, do not insert
+		 * it into the neighbor list packet.
+		 */
+		if (((NWP_STATUS_MASK & ha->remote_sc) == NWP_FAILED) &&
+			(clockcmp32((u32)t.tv_sec,
+			ha->local_c + NWP_LIST_TIME_MAX) > 0)) {
+			spin_unlock(&ha->status_lock);
+			continue;
+		}
+		be_status_clock = __cpu_to_be32(ha->remote_sc);
+		spin_unlock(&ha->status_lock);
 
 		is_new_hid = prv_mhid != mhid;
 		need_new_skb = (*phid_counter == 0xff) ||
@@ -735,6 +901,9 @@ static void list_neighs_to(struct hid_dev *hdev, u8 *dest_haddr)
 
 		/* Add new hardware address. */
 		memcpy(skb_put(skb, addr_len), ha->ha, addr_len);
+		/* Add status of neighbor. */
+		memcpy(skb_put(skb, NWP_STATUS_LEN), &be_status_clock,
+			NWP_STATUS_LEN);
 		(*pcounter)++;
 
 		prv_mhid = mhid;
@@ -772,7 +941,9 @@ static void read_announcement(struct sk_buff *skb)
 			break;
 		}
 		/* Ignore errors. */
-		insert_neigh(hid_ctx, xid, skb->dev, nwp->haddr, NLM_F_CREATE);
+		insert_neigh_status(hid_ctx, xid, skb->dev, nwp->haddr,
+			NWP_ACTIVE | (NWP_CLOCK_MASK &
+			__be32_to_cpu(nwp->clock)), NLM_F_CREATE);
 		xid = next_xid;
 		count--;
 	}
@@ -819,7 +990,8 @@ static int process_neigh_list(struct sk_buff *skb)
 	struct net_device *dev = skb->dev;
 	struct net *net = dev_net(dev);
 	int hdr_len = offsetof(struct neighs_hdr, neighs_begin);
-	int min_list = hdr_len + XIA_XID_MAX + 1 + dev->addr_len;
+	int min_list = hdr_len + XIA_XID_MAX + 1 + dev->addr_len +
+		NWP_STATUS_LEN;
 	struct neighs_hdr *nwp;
 	u8 *xid;
 	struct xip_hid_ctx *hid_ctx;
@@ -845,7 +1017,10 @@ static int process_neigh_list(struct sk_buff *skb)
 		original_ha_count = xid[XIA_XID_MAX];
 		ha_count = original_ha_count;
 		while (ha_count > 0) {
-			u8 *next_haddr_or_xid = skb_pull(skb, dev->addr_len);
+			u32 status_clock =
+				__be32_to_cpu(*((__be32 *)skb_pull(skb,
+				dev->addr_len)));
+			u8 *next_haddr_or_xid = skb_pull(skb, NWP_STATUS_LEN);
 			if (!next_haddr_or_xid) {
 				if (net_ratelimit()) {
 					char str[XIA_MAX_STRXID_SIZE];
@@ -858,8 +1033,8 @@ static int process_neigh_list(struct sk_buff *skb)
 			}
 
 			/* Ignore errors. */
-			insert_neigh(hid_ctx, xid, dev, haddr_or_xid,
-				NLM_F_CREATE);
+			insert_neigh_status(hid_ctx, xid, dev, haddr_or_xid,
+				status_clock, NLM_F_CREATE);
 
 			haddr_or_xid = next_haddr_or_xid;
 			ha_count--;

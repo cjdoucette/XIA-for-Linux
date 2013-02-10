@@ -79,6 +79,17 @@ struct hrdw_addr {
 	struct xip_dst_anchor	anchor;
 	struct rcu_head		rcu_head;
 
+	/* Remote status and clock.
+	 * Bits 0-30: remote wall time (seconds).
+	 * Bit 31: 0 for failed, 1 for active. */
+	u32			remote_sc;
+
+	/* Local clock.
+	 * All bits: local wall time (seconds). */
+	u32			local_c;
+
+	spinlock_t		status_lock;
+
 	/* Since @ha is at the end of struct hrdw_addr, one doesn't need to
 	 * enforce alignment, otherwise use the following line:
 	 * u8 ha[ALIGN(MAX_ADDR_LEN, sizeof(long))];
