@@ -558,8 +558,6 @@ struct announcement_state {
 struct general_hdr {
 	u8	version;
 	u8	type;
-	u8	hid_count;
-	u8	haddr_len;
 } __packed;
 
 struct announcement_hdr {
@@ -964,6 +962,8 @@ static int process_announcement(struct sk_buff *skb)
 		goto out;
 	skb_reset_network_header(skb);
 	nwp = (struct announcement_hdr *)skb_network_header(skb);
+	if (nwp->hid_count == 0 || nwp->haddr_len != dev->addr_len)
+		goto out;
 	skb_pull(skb, hdr_len);
 	read_announcement(skb);
 
@@ -1001,6 +1001,8 @@ static int process_neigh_list(struct sk_buff *skb)
 		goto out;
 	skb_reset_network_header(skb);
 	nwp = (struct neighs_hdr *)skb_network_header(skb);
+	if (nwp->hid_count == 0 || nwp->haddr_len != dev->addr_len)
+		goto out;
 	xid = skb_pull(skb, hdr_len);
 
 	hid_ctx = ctx_hid(xip_find_my_ppal_ctx_vxt(net, hid_vxt));
@@ -1060,8 +1062,6 @@ static int nwp_rcv(struct sk_buff *skb, struct net_device *dev,
 	ghdr = (struct general_hdr *)skb_network_header(skb);
 	if (ghdr->version != NWP_VERSION		||
 		ghdr->type >= NWP_TYPE_MAX		||
-		ghdr->hid_count == 0			||
-		ghdr->haddr_len != dev->addr_len	||
 		dev->flags & (IFF_NOARP | IFF_LOOPBACK)	||
 		skb->pkt_type == PACKET_OTHERHOST	||
 		skb->pkt_type == PACKET_LOOPBACK)
