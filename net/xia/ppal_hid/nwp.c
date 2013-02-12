@@ -18,7 +18,7 @@ static struct hrdw_addr *new_ha(struct net_device *dev, const u8 *lladdr,
 	if (!ha)
 		return NULL;
 	INIT_LIST_HEAD(&ha->ha_list);
-	INIT_LIST_HEAD(&ha->hdev_list);	
+	INIT_LIST_HEAD(&ha->hdev_list);
 	ha->dev = dev;
 	dev_hold(dev);
 	xdst_init_anchor(&ha->anchor);
@@ -597,7 +597,7 @@ static void announce_event(unsigned long data)
 
 out:
 	atomic_set(&hid_ctx->announced, next_to_announce);
-	mod_timer(&hid_ctx->announce_timer, jiffies + 5*HZ);
+	mod_timer(&hid_ctx->announce_timer, jiffies + 5 * HZ);
 }
 
 /*
@@ -615,7 +615,7 @@ int hid_init_hid_state(struct xip_hid_ctx *hid_ctx)
 	hid_ctx->announce_timer.data = (unsigned long)hid_ctx;
 	/* XXX Having a random delay should help to avoid synchronization. */
 	/* XXX Not starting timer if there's nothing to announce. */
-	mod_timer(&hid_ctx->announce_timer, jiffies + 5*HZ);
+	mod_timer(&hid_ctx->announce_timer, jiffies + 5 * HZ);
 
 	return 0;
 }
