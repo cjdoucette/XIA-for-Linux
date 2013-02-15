@@ -90,6 +90,12 @@ struct hrdw_addr {
 
 	spinlock_t		status_lock;
 
+	/* If @manual is true, this neighbor cannot be removed from the
+	 * neighbor list. Note: there are three bytes of alignment space
+	 * after @manual in this struct.
+	 */
+	u8			manual;
+
 	/* Since @ha is at the end of struct hrdw_addr, one doesn't need to
 	 * enforce alignment, otherwise use the following line:
 	 * u8 ha[ALIGN(MAX_ADDR_LEN, sizeof(long))];

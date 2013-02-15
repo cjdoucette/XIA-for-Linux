@@ -50,7 +50,7 @@ static inline int clockcmp31(u32 c1, u32 c2)
  */
 
 static struct hrdw_addr *new_ha(struct net_device *dev, const u8 *lladdr,
-	u32 status_clock, gfp_t flags)
+	u32 status_clock, u8 manual, gfp_t flags)
 {
 	struct timeval t;
 	struct hrdw_addr *ha = kzalloc(sizeof(*ha), flags);
@@ -70,6 +70,7 @@ static struct hrdw_addr *new_ha(struct net_device *dev, const u8 *lladdr,
 	do_gettimeofday(&t);
 	ha->local_c = (u32)t.tv_sec;
 	ha->remote_sc = status_clock;
+	ha->manual = manual;
 	return ha;
 }
 
@@ -160,7 +161,8 @@ static void update_ha_sc(struct fib_xid_hid_main *mhid,
 	}
 
 	/* XXX Is it okay that a new anchor is assigned for this HA? */
-	updated_ha = new_ha(old->dev, old->ha, updated_rsc, GFP_ATOMIC);
+	updated_ha = new_ha(old->dev, old->ha, updated_rsc,
+		old->manual, GFP_ATOMIC);
 	updated_ha->local_c = updated_lc;
 	mhid_hold(mhid);
 	updated_ha->mhid = mhid;
@@ -235,12 +237,14 @@ static void find_update_neigh_sc(struct net_device *dev, const u8 *lladdr,
 				(ha->remote_sc + (curr_c >= ha->local_c
 				? curr_c - ha->local_c
 				: curr_c + (NWP_LC_MAX - ha->local_c) + 1)),
-				GFP_ATOMIC);
+				ha->manual, GFP_ATOMIC);
+			BUG_ON(ha->manual);
 			spin_unlock(&ha->status_lock);
 		} else {
 			spin_lock(&ha->status_lock);
 			updated_ha = new_ha(dev, ha->ha, status_clock,
-				GFP_ATOMIC);
+				ha->manual, GFP_ATOMIC);
+			BUG_ON(ha->manual);
 			spin_unlock(&ha->status_lock);
 		}
 
@@ -431,7 +435,7 @@ static void free_neighs_by_dev(struct hid_dev *hdev)
 
 static int insert_neigh_status(struct xip_hid_ctx *hid_ctx, const char *id,
 	struct net_device *dev, const u8 *lladdr, u32 status_clock,
-	u32 nl_flags)
+	u8 manual, u32 nl_flags)
 {
 	struct hrdw_addr *ha;
 	struct fib_xid_table *xtbl;
@@ -447,7 +451,7 @@ static int insert_neigh_status(struct xip_hid_ctx *hid_ctx, const char *id,
 	/* GFP_ATOMIC is important because this function may be called from
 	 * an atomic context.
 	 */
-	ha = new_ha(dev, lladdr, status_clock, GFP_ATOMIC);
+	ha = new_ha(dev, lladdr, status_clock, manual, GFP_ATOMIC);
 	if (!ha)
 		return -ENOMEM;
 
@@ -546,7 +550,7 @@ int insert_neigh(struct xip_hid_ctx *hid_ctx, const char *id,
 	 * not be monitored by NWP and can be labeled failed.
 	 */
 	return insert_neigh_status(hid_ctx, id, dev, lladdr, NWP_FAILED,
-		nl_flags);
+		true, nl_flags);
 }
 
 int remove_neigh(struct fib_xid_table *xtbl, const char *id,
@@ -1035,7 +1039,7 @@ static bool pick_random_neigh(struct hid_dev *hdev)
 		if ((NWP_STATUS_MASK & ha->remote_sc) == NWP_ACTIVE) {
 			spin_unlock(&ha->status_lock);
 			some_neigh_active = true;
-			if (i++ == target_num) {
+			if (i++ == target_num && !ha->manual) {
 				spin_lock(&hdev->neigh_lock);
 				memcpy(hdev->target, ha->ha, dev->addr_len);
 				spin_unlock(&hdev->neigh_lock);
@@ -1193,11 +1197,12 @@ static void clean_neigh_list(unsigned long data)
 	do_gettimeofday(&t);
 	curr_t = (u32)t.tv_sec;
 
-	/* Remove neighbors that have failed and expired. */
+	/* Remove failed and expired neighs if not manually-entered. */
 	list_for_each_entry(ha, &hdev->neighs, hdev_list) {
 		spin_lock(&ha->status_lock);
 		if ((clockcmp32(curr_t, ha->local_c + NWP_FAILED_TTL) > 0) &&
-			((NWP_STATUS_MASK & ha->remote_sc) == NWP_FAILED)) {
+			((NWP_STATUS_MASK & ha->remote_sc) == NWP_FAILED) &&
+			!ha->manual) {
 			spin_unlock(&ha->status_lock);
 			xid = ha->mhid->xhm_common.fx_xid;
 			remove_neigh(xtbl, xid, dev, ha->ha);
@@ -1320,14 +1325,17 @@ static void list_neighs_to(struct hid_dev *hdev, u8 *dest_haddr)
 		__be32 be_status_clock;
 		BUG_ON(ha->dev != dev);
 
+		/* If neighbor has failed and expired or if neighbor was
+		 * manually-entered (@ha->manual is true), then do not list.
+		 */
 		do_gettimeofday(&t);
 		spin_lock(&ha->status_lock);
 		/* If a failed neighbor has expired, do not insert
 		 * it into the neighbor list packet.
 		 */
-		if (((NWP_STATUS_MASK & ha->remote_sc) == NWP_FAILED) &&
-			(clockcmp32((u32)t.tv_sec,
-			ha->local_c + NWP_LIST_TIME_MAX) > 0)) {
+		if (ha->manual || ((clockcmp32((u32)t.tv_sec,
+			ha->local_c + NWP_LIST_TIME_MAX) > 0) &&
+			((NWP_STATUS_MASK & ha->remote_sc) == NWP_FAILED))) {
 			spin_unlock(&ha->status_lock);
 			continue;
 		}
@@ -1405,7 +1413,7 @@ static void read_announcement(struct sk_buff *skb)
 		/* Ignore errors. */
 		insert_neigh_status(hid_ctx, xid, skb->dev, nwp->haddr,
 			NWP_ACTIVE | (NWP_CLOCK_MASK &
-			__be32_to_cpu(nwp->clock)), NLM_F_CREATE);
+			__be32_to_cpu(nwp->clock)), false, NLM_F_CREATE);
 		xid = next_xid;
 		count--;
 	}
@@ -1501,7 +1509,7 @@ static int process_neigh_list(struct sk_buff *skb)
 
 			/* Ignore errors. */
 			insert_neigh_status(hid_ctx, xid, dev, haddr_or_xid,
-				status_clock, NLM_F_CREATE);
+				status_clock, false, NLM_F_CREATE);
 
 			haddr_or_xid = next_haddr_or_xid;
 			ha_count--;
