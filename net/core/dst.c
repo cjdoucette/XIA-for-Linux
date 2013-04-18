@@ -164,6 +164,16 @@ void dst_init(struct dst_entry *dst, struct dst_ops *ops,
 	      struct net_device *dev, int initial_ref, int initial_obsolete,
 	      unsigned short flags)
 {
+	struct dst_entry *dst;
+
+	if (ops->gc && !(flags & DST_NOCOUNT) &&
+		dst_entries_get_fast(ops) > ops->gc_thresh) {
+		if (ops->gc(ops))
+			return NULL;
+	}
+	dst = kmem_cache_alloc(ops->kmem_cachep, GFP_ATOMIC);
+	if (!dst)
+		return NULL;
 	dst->child = NULL;
 	dst->dev = dev;
 	if (dev)
