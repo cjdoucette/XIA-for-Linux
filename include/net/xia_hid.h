@@ -147,6 +147,19 @@ struct hid_dev {
 	atomic_t		neigh_cnt;
 	spinlock_t		neigh_lock; /* Lock for the neighs list. */
 	struct list_head	neighs;
+
+	/* A timer that expires every NWP_INTERVAL seconds to begin a
+	 * new monitoring interval. The expiration of this timer
+	 * represents one period for the monitoring algorithm.
+	 * NWP_INTERVAL is defined in net/xia/ppal_hid.nwp.c.
+	 */
+	struct timer_list	monitor_timer;
+
+	/* Flags for NWP monitoring (defined in net/xia/ppal_hid/nwp.c). */
+	u8			monitor_flags;
+
+	/* Hardware address of target currently being monitored. */
+	u8			target[MAX_ADDR_LEN];
 };
 
 static inline struct hid_dev *__hid_dev_get_rcu(const struct net_device *dev)
