@@ -154,6 +154,10 @@ struct hid_dev {
 	 * NWP_INTERVAL is defined in net/xia/ppal_hid.nwp.c.
 	 */
 	struct timer_list	monitor_timer;
+	/* Periodically expires to clean the neighbor list of failed nodes
+	 * that have been failed for at least NWP_FAILED_TTL.
+	 */
+	struct timer_list	clean_timer;
 
 	/* Flags for NWP monitoring (defined in net/xia/ppal_hid/nwp.c). */
 	u8			monitor_flags;

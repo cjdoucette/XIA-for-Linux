@@ -862,6 +862,11 @@ static inline int test_flag(struct hid_dev *hdev, u8 flag)
 	return test_bit(flag, (long unsigned int *)&hdev->monitor_flags);
 }
 
+/* Minimum lifetime of a neighbor after failure is detected. */
+#define NWP_FAILED_TTL		10
+/* Period between cleaning of the neighbor list. */
+#define NWP_CLEAN_TIME		(20 * HZ)
+
 static void end_interval_failure(unsigned long);
 
 struct monitoring_hdr {
@@ -1160,6 +1165,50 @@ out:
 	hid_dev_put(hdev);
 	consume_skb(skb);
 	return 0;
+}
+
+static void clean_neigh_list(unsigned long data)
+{
+	struct net_device *dev = (struct net_device *)data;
+	struct net *net = dev_net(dev);
+	struct hrdw_addr *ha;
+	struct xip_ppal_ctx *ctx;
+	struct fib_xid_table *xtbl;
+	struct hid_dev *hdev = hid_dev_get(dev);
+	struct timeval t;
+	u32 curr_t;
+	char *xid;
+
+	if (!atomic_read(&hdev->neigh_cnt)) {
+		hid_dev_put(hdev);
+		return;
+	}
+
+	rcu_read_lock();
+	ctx = xip_find_ppal_ctx_rcu(net, XIDTYPE_HID);
+	xtbl = ctx->xpc_xtbl;
+	xtbl_hold(xtbl);
+	rcu_read_unlock();
+
+	do_gettimeofday(&t);
+	curr_t = (u32)t.tv_sec;
+
+	/* Remove neighbors that have failed and expired. */
+	list_for_each_entry(ha, &hdev->neighs, hdev_list) {
+		spin_lock(&ha->status_lock);
+		if ((clockcmp32(curr_t, ha->local_c + NWP_FAILED_TTL) > 0) &&
+			((NWP_STATUS_MASK & ha->remote_sc) == NWP_FAILED)) {
+			spin_unlock(&ha->status_lock);
+			xid = ha->mhid->xhm_common.fx_xid;
+			remove_neigh(xtbl, xid, dev, ha->ha);
+			continue;
+		}
+		spin_unlock(&ha->status_lock);
+	}
+
+	xtbl_put(xtbl);
+	hid_dev_put(hdev);
+	mod_timer(&hdev->clean_timer, jiffies + NWP_CLEAN_TIME);
 }
 
 /*
@@ -1462,6 +1511,9 @@ static int process_neigh_list(struct sk_buff *skb)
 	}
 
 	if (!test_flag(hdev, NWP_MONITORING)) {
+		if (!timer_pending(&hdev->clean_timer))
+			mod_timer(&hdev->clean_timer,
+				jiffies + NWP_CLEAN_TIME);
 		set_flag(hdev, NWP_MONITORING);
 		monitor(dev, true);
 	}
@@ -1537,6 +1589,7 @@ void hid_dev_finish_destroy(struct hid_dev *hdev)
 		dump_stack();
 	}
 
+	del_timer_sync(&hdev->clean_timer);
 	del_timer_sync(&hdev->monitor_timer);
 
 	dev_put(dev);
@@ -1561,6 +1614,10 @@ static struct hid_dev *hdev_init(struct net_device *dev)
 
 	init_timer(&hdev->monitor_timer);
 	hdev->monitor_timer.data = (unsigned long)dev;
+
+	init_timer(&hdev->clean_timer);
+	hdev->clean_timer.data = (unsigned long)dev;
+	hdev->clean_timer.function = clean_neigh_list;
 
 	clear_flag(hdev, NWP_MONITORING);
 	clear_flag(hdev, NWP_INV_REPLIED);
