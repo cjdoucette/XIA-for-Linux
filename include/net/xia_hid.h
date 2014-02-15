@@ -7,11 +7,14 @@
 /* Host Principal */
 #define XIDTYPE_HID (__cpu_to_be32(0x11))
 
+#define NWP_STATUS_MASK		0x80000000
+
 struct rtnl_xia_hid_hdw_addrs {
 	__u16		hha_len;
 	__u8		hha_addr_len;
 	__u8		hha_ha[MAX_ADDR_LEN];
 	int		hha_ifindex;
+	__u8		status;
 };
 
 static inline int RTHA_OK(struct rtnl_xia_hid_hdw_addrs *rtha, int len)

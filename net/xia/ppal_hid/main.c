@@ -200,6 +200,10 @@ static int main_dump_hid(struct fib_xid *fxid, struct fib_xid_table *xtbl,
 		rtha->hha_addr_len = pos_ha->dev->addr_len;
 		memmove(rtha->hha_ha, pos_ha->ha, rtha->hha_addr_len);
 		rtha->hha_ifindex = pos_ha->dev->ifindex;
+		spin_lock(&pos_ha->status_lock);
+		/* Move status bit right so that it will fit in a byte. */
+		rtha->status = (pos_ha->remote_sc & NWP_STATUS_MASK) >> 31;
+		spin_unlock(&pos_ha->status_lock);
 
 		/* No attributes. */
 
