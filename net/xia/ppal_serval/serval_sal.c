@@ -1124,9 +1124,11 @@ static struct xia_row *xip_src_sink(struct sk_buff *skb)
 }
 
 static struct serval_request_sock *serval_reqsk_alloc(
-	const struct request_sock_ops *ops)
+	const struct request_sock_ops *ops, struct sock *sk_listener,
+	bool attach_listener)
 {
-	struct serval_request_sock *srsk = serval_rsk(reqsk_alloc(ops));
+	struct serval_request_sock *srsk =
+		serval_rsk(reqsk_alloc(ops, sk_listener, attach_listener));
 
 	if (unlikely(!srsk))
 		return NULL;
@@ -1163,7 +1165,7 @@ static int serval_sal_rcv_syn(struct sock *sk, struct sk_buff *skb,
 		goto drop;
 	}
 
-	srsk = serval_reqsk_alloc(sk->sk_prot->rsk_prot);
+	srsk = serval_reqsk_alloc(sk->sk_prot->rsk_prot, sk, true);
 	if (!srsk) {
 		rc = -ENOMEM;
 		goto drop;
