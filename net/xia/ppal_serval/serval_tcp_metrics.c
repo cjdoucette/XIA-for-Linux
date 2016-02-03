@@ -9,6 +9,7 @@
 #include <linux/tcp.h>
 #include <linux/hash.h>
 #include <linux/tcp_metrics.h>
+#include <linux/vmalloc.h>
 #include <net/sock.h>
 #include <net/dst.h>
 #include <net/tcp.h>
