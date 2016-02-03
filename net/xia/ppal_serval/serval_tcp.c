@@ -817,7 +817,7 @@ ssize_t serval_tcp_splice_read(struct socket *sock, loff_t *ppos,
 				ret = -EAGAIN;
 				break;
 			}
-			sk_wait_data(sk, &timeo);
+			sk_wait_data(sk, &timeo, NULL);
 			if (signal_pending(current)) {
 				ret = sock_intr_errno(timeo);
 				break;
@@ -1194,7 +1194,7 @@ static int serval_tcp_recvmsg(struct sock *sk, struct msghdr *msg,
 	int target;		/* Read at least this many bytes */
 	long timeo;
 	struct task_struct *user_recv = NULL;
-	struct sk_buff *skb;
+	struct sk_buff *skb, *last;
 	u32 urg_hole = 0;
 
 	lock_sock(sk);
@@ -1233,12 +1233,14 @@ static int serval_tcp_recvmsg(struct sock *sk, struct msghdr *msg,
 			}
 		}
 
+		last = skb_peek_tail(&sk->sk_receive_queue);
 		if (tp->fin_found)
 			goto wait_for_event;
 
 		/* Next get a buffer. */
 
 		skb_queue_walk(&sk->sk_receive_queue, skb) {
+			last = skb;
 			/* Now that we have two receive queues this
 			 * shouldn't happen.
 			 */
@@ -1363,7 +1365,7 @@ wait_for_event:
 			release_sock(sk);
 			lock_sock(sk);
 		} else {
-			sk_wait_data(sk, &timeo);
+			sk_wait_data(sk, &timeo, last);
 			/* Woke up after waiting for data. */
 		}
 
