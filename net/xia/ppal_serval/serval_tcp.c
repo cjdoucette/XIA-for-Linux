@@ -731,8 +731,9 @@ static int serval_tcp_splice_data_recv(read_descriptor_t *rd_desc,
 	struct tcp_splice_state *tss = rd_desc->arg.data;
 	int ret;
 
-	ret = skb_splice_bits(skb, offset, tss->pipe, min(rd_desc->count, len),
-			      tss->flags);
+	ret = skb_splice_bits(skb, skb->sk, offset, tss->pipe,
+			      min(rd_desc->count, len),
+			      tss->flags, skb_socket_splice);
 	if (ret > 0)
 		rd_desc->count -= ret;
 	return ret;
