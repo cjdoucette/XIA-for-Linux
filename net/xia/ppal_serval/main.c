@@ -1227,8 +1227,7 @@ static int serval_shutdown(struct socket *sock, int how)
 	return rc;
 }
 
-static int serval_sendmsg(struct kiocb *iocb, struct socket *sock,
-			  struct msghdr *msg, size_t size)
+static int serval_sendmsg(struct socket *sock, struct msghdr *msg, size_t size)
 {
 	struct sock *sk = sock->sk;
 
@@ -1236,7 +1235,7 @@ static int serval_sendmsg(struct kiocb *iocb, struct socket *sock,
 	if (sk->sk_err || (sk->sk_shutdown & SEND_SHUTDOWN))
 		return -EPIPE;
 
-	return xia_sendmsg(iocb, sock, msg, size);
+	return xia_sendmsg(sock, msg, size);
 }
 
 extern unsigned int serval_tcp_poll(struct file *file, struct socket *sock,

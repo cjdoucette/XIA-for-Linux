@@ -847,8 +847,7 @@ ssize_t serval_tcp_splice_read(struct socket *sock, loff_t *ppos,
 
 #endif /* ENABLE_SPLICE */
 
-static int serval_tcp_sendmsg(struct kiocb *iocb, struct sock *sk,
-			      struct msghdr *msg, size_t size)
+static int serval_tcp_sendmsg(struct sock *sk, struct msghdr *msg, size_t size)
 {
 	struct serval_tcp_sock *tp = serval_tcp_sk(sk);
 	struct sk_buff *skb;
@@ -1181,8 +1180,7 @@ static void serval_tcp_prequeue_process(struct sock *sk)
 	tp->ucopy.memory = 0;
 }
 
-static int serval_tcp_recvmsg(struct kiocb *iocb, struct sock *sk,
-			      struct msghdr *msg,
+static int serval_tcp_recvmsg(struct sock *sk, struct msghdr *msg,
 			      size_t len, int nonblock, int flags,
 			      int *addr_len)
 {
