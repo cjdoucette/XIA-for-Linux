@@ -1007,7 +1007,7 @@ static void serval_sal_send_reset(struct sock *sk, struct sk_buff *skb,
 	push_xip_hdr(rskb, xdst, ssk->xia_sk.xia_saddr.s_row,
 		     ssk->xia_sk.xia_snum, dest, num_dest, dest_last_node);
 
-	xip_local_out(rskb);
+	xip_local_out(sock_net(sk), sk, rskb);
 }
 
 void serval_sal_send_active_reset(struct sock *sk, gfp_t priority)
@@ -1102,7 +1102,7 @@ static int serval_sal_send_synack(struct sock *sk,
 			  ssk->xia_sk.xia_snum, dest, num_dest,
 			  dest_last_node);
 
-	return xip_local_out(rskb);
+	return xip_local_out(sock_net(sk), sk, rskb);
 }
 
 static struct xia_row *xip_dst_sink(struct sk_buff *skb)
@@ -2315,7 +2315,7 @@ static int serval_sal_do_xmit(struct sk_buff *skb)
 #else
 static inline int serval_sal_do_xmit(struct sk_buff *skb)
 {
-	return xip_local_out(skb);
+	return xip_local_out(sock_net(skb->sk), skb->sk, skb);
 }
 #endif
 

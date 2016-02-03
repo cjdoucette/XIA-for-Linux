@@ -382,14 +382,14 @@ drop:
 #endif
 
 /* XXX Move this function to XIA core and replace and all principals. */
-static int bug_dst_out_method(struct sock *sk, struct sk_buff *skb)
+static int bug_dst_out_method(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
 	BUG();
 }
 
 #define local_output_input local_input_input
 
-static int local_output_output(struct sock *sk, struct sk_buff *skb)
+static int local_output_output(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
 	struct net_device *dev = skb_dst(skb)->dev;
 
@@ -401,7 +401,7 @@ static int local_output_output(struct sock *sk, struct sk_buff *skb)
 	skb->protocol = __cpu_to_be16(ETH_P_XIP);
 
 	/* Deliver @skb to its socket. */
-	return dev_loopback_xmit(skb);
+	return dev_loopback_xmit(net, sk, skb);
 }
 
 static int srvc_deliver(struct xip_route_proc *rproc, struct net *net,
