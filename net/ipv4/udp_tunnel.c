@@ -51,7 +51,7 @@ error:
 	*sockp = NULL;
 	return err;
 }
-EXPORT_SYMBOL(udp_sock_create4);
+EXPORT_SYMBOL_GPL(udp_sock_create4);
 
 void setup_udp_tunnel_sock(struct net *net, struct socket *sock,
 			   struct udp_tunnel_sock_cfg *cfg)

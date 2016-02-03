@@ -1890,6 +1890,7 @@ ssize_t skb_socket_splice(struct sock *sk,
 
 	return ret;
 }
+EXPORT_SYMBOL_GPL(skb_socket_splice);
 
 /*
  * Map data from the skb to a pipe. Should handle both the linear part,
