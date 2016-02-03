@@ -587,7 +587,7 @@ unsigned int serval_tcp_poll(struct file *file,
 			if (sk_stream_wspace(sk) >= sk_stream_min_wspace(sk)) {
 				mask |= POLLOUT | POLLWRNORM;
 			} else {  /* send SIGIO later */
-				set_bit(SOCK_ASYNC_NOSPACE,
+				set_bit(SOCKWQ_ASYNC_NOSPACE,
 					&sk->sk_socket->flags);
 				set_bit(SOCK_NOSPACE, &sk->sk_socket->flags);
 
@@ -887,7 +887,7 @@ static int serval_tcp_sendmsg(struct sock *sk, struct msghdr *msg, size_t size)
 	}
 
 	/* This should be in poll */
-	clear_bit(SOCK_ASYNC_NOSPACE, &sk->sk_socket->flags);
+	clear_bit(SOCKWQ_ASYNC_NOSPACE, &sk->sk_socket->flags);
 
 	mss_now = serval_tcp_send_mss(sk, &size_goal, flags);
 
