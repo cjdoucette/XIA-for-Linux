@@ -105,7 +105,7 @@ static void serval_tcp_openreq_init(struct serval_tcp_request_sock *trsk,
 {
 	struct request_sock *req = &trsk->rsk.req;
 
-	req->rcv_wnd = 0;	/* So that tcp_send_synack() knows! */
+	req->rsk_rcv_wnd = 0;	/* So that tcp_send_synack() knows! */
 	req->cookie_ts = 0;
 	req->mss = rx_opt->mss_clamp;
 	req->ts_recent = rx_opt->saw_tstamp ? rx_opt->rcv_tsval : 0;
@@ -2194,9 +2194,9 @@ static void serval_tcp_create_openreq_child(struct sock *sk,
 			serval_tcp_enable_fack(newtp);
 	}
 #endif
-	newtp->window_clamp = req->window_clamp;
-	newtp->rcv_ssthresh = req->rcv_wnd;
-	newtp->rcv_wnd = req->rcv_wnd;
+	newtp->window_clamp = req->rsk_window_clamp;
+	newtp->rcv_ssthresh = req->rsk_rcv_wnd;
+	newtp->rcv_wnd = req->rsk_rcv_wnd;
 	newtp->rx_opt.wscale_ok = treq->wscale_ok;
 	if (newtp->rx_opt.wscale_ok) {
 		/* TCP window scaling OK. */

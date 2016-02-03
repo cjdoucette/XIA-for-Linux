@@ -1970,19 +1970,20 @@ int serval_tcp_connection_build_synack(struct sock *sk, struct dst_entry *dst,
 
 	mss = dst_metric_advmss(dst);
 
-	if (req->rcv_wnd == 0) { /* Ignored for retransmitted syns. */
+	if (req->rsk_rcv_wnd == 0) { /* Ignored for retransmitted syns. */
 		__u8 rcv_wscale;
 		/* Set this up on the first call only. */
 
-		req->window_clamp = tp->window_clamp ? :
+		req->rsk_window_clamp = tp->window_clamp ? :
 			dst_metric(dst, RTAX_WINDOW);
 		/* tcp_full_space because it is guaranteed to be the
 		 * first packet.
 		 */
 		serval_tcp_select_initial_window(serval_tcp_full_space(sk),
 			mss - (trsk->tstamp_ok ? TCPOLEN_TSTAMP_ALIGNED : 0),
-			&req->rcv_wnd, &req->window_clamp, trsk->wscale_ok,
-			&rcv_wscale, dst_metric(dst, RTAX_INITRWND));
+			&req->rsk_rcv_wnd, &req->rsk_window_clamp,
+			trsk->wscale_ok, &rcv_wscale,
+			dst_metric(dst, RTAX_INITRWND));
 		trsk->rcv_wscale = rcv_wscale;
 	}
 
@@ -2008,7 +2009,7 @@ int serval_tcp_connection_build_synack(struct sock *sk, struct dst_entry *dst,
 					TCP_SKB_CB(skb)->tcp_flags);
 	th->check = 0;
 	/* RFC1323: The window in SYN & SYN/ACK segments is never scaled. */
-	th->window = htons(min(req->rcv_wnd, 65535U));
+	th->window = htons(min(req->rsk_rcv_wnd, 65535U));
 	serval_tcp_options_write((__be32 *)(th + 1), tp, &opts);
 
 	__serval_tcp_v4_send_check(skb);
