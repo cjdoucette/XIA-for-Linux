@@ -109,7 +109,7 @@ static int u4id_udp_encap_recv(struct sock *sk, struct sk_buff *skb)
 	skb_dst_drop(skb);
 	nf_reset(skb);
 
-	skb->dev = sk->sk_net->loopback_dev;
+	skb->dev = sock_net(sk)->loopback_dev;
 	skb->protocol = __cpu_to_be16(ETH_P_XIP);
 	skb_reset_network_header(skb);
 
