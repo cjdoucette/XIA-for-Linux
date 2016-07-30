@@ -4,4 +4,4 @@
 
 obj-$(CONFIG_XIA_PPAL_LPM) += xia_ppal_lpm.o
 
-xia_ppal_lpm-objs :=	main.o tree_fib.o
+xia_ppal_lpm-objs :=	main.o tree_fib.o popt_fib.o

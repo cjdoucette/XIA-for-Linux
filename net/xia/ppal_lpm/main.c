@@ -38,13 +38,13 @@ static inline struct fib_xid_lpm_local *fxid_llpm(struct fib_xid *fxid)
 		: NULL;
 }
 
-/* Use a tree FIB.
+/* Use a poptrie FIB.
  *
  * NOTE
  *      To fully change the tree FIB, you must change @lpm_all_rt_eops
  *	as well as the tree FIB calls in local_newroute().
  */
-const struct xia_ppal_rt_iops *lpm_rt_iops = &xia_ppal_tree_rt_iops;
+const struct xia_ppal_rt_iops *lpm_rt_iops = &xia_ppal_popt_rt_iops;
 
 /* Assuming the FIB is locked, find the appropriate anchor,
  * flush it, and unlock the FIB.

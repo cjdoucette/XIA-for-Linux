@@ -19,6 +19,12 @@ static inline bool valid_prefix(struct xia_fib_config *cfg)
 }
 
 /*
+ *	Exported by popt_fib.c
+ */
+
+extern const struct xia_ppal_rt_iops xia_ppal_popt_rt_iops;
+
+/*
  *	Exported by tree_fib.c
  */
 
